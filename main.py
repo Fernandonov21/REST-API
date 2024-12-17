@@ -1,36 +1,27 @@
 import pymysql
-pymysql.install_as_MySQLdb()
-
 from fastapi import FastAPI, Depends
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
-from typing import List
-from sqlalchemy import create_engine, Column, Integer, String
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker, Session
+from typing import List, Optional
 
 # Configuración de la base de datos MySQL
-SQLALCHEMY_DATABASE_URL = "mysql://admin:admin123@localhost:3307/usersdb"
+MYSQL_HOST = "localhost"
+MYSQL_PORT = 3307
+MYSQL_USER = "admin"
+MYSQL_PASSWORD = "admin123"
+MYSQL_DB = "usersdb"
 
-# Crear el motor de SQLAlchemy
-engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={"charset": "utf8mb4"})
-
-# Crear la sesión de la base de datos
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
-# Crear la base declarativa de SQLAlchemy
-Base = declarative_base()
-
-# Definición del modelo User en SQLAlchemy (ajustado para la tabla users)
-class User(Base):
-    __tablename__ = "users"  # Especificamos que esta clase mapea a la tabla 'users'
-    
-    id = Column(Integer, primary_key=True, index=True)
-    username = Column(String(255), unique=True, index=True)  # 'username' en vez de 'name'
-    email = Column(String(255), unique=True, index=True)
-
-# Crear las tablas en la base de datos si no existen (solo para nuevas tablas)
-Base.metadata.create_all(bind=engine)
+# Conectar a la base de datos MySQL
+def get_db_connection():
+    connection = pymysql.connect(
+        host=MYSQL_HOST,
+        port=MYSQL_PORT,
+        user=MYSQL_USER,
+        password=MYSQL_PASSWORD,
+        database=MYSQL_DB,
+        charset='utf8mb4'
+    )
+    return connection
 
 # FastAPI setup
 app = FastAPI(
@@ -57,14 +48,6 @@ class UserResponse(BaseModel):
     class Config:
         orm_mode = True
 
-# Dependencia para obtener la sesión de la base de datos
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
 # Ruta raíz
 @app.get("/", tags=["Root"])
 def read_root():
@@ -72,25 +55,41 @@ def read_root():
 
 # Obtener todos los usuarios
 @app.get("/users/", response_model=List[UserResponse], tags=["Users"])
-def get_users(db: Session = Depends(get_db)):
-    return db.query(User).all()
+def get_users():
+    connection = get_db_connection()
+    cursor = connection.cursor(pymysql.cursors.DictCursor)
+    cursor.execute("SELECT id, username, email FROM users")
+    users = cursor.fetchall()
+    cursor.close()
+    connection.close()
+    return users
 
 # Obtener un usuario por ID
 @app.get("/users/{user_id}", response_model=UserResponse, tags=["Users"])
-def get_user(user_id: int, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.id == user_id).first()
+def get_user(user_id: int):
+    connection = get_db_connection()
+    cursor = connection.cursor(pymysql.cursors.DictCursor)
+    cursor.execute("SELECT id, username, email FROM users WHERE id = %s", (user_id,))
+    user = cursor.fetchone()
+    cursor.close()
+    connection.close()
     if not user:
         return {"message": "User not found"}
     return user
 
 # Crear un nuevo usuario
 @app.post("/users/", response_model=UserResponse, tags=["Users"])
-def create_user(user: UserResponse, db: Session = Depends(get_db)):
-    db_user = User(
-        username=user.username,
-        email=user.email
+def create_user(user: UserResponse):
+    connection = get_db_connection()
+    cursor = connection.cursor()
+    cursor.execute(
+        "INSERT INTO users (username, email) VALUES (%s, %s)",
+        (user.username, user.email)
     )
-    db.add(db_user)
-    db.commit()
-    db.refresh(db_user)
-    return db_user
+    connection.commit()
+    user_id = cursor.lastrowid
+    cursor.close()
+    connection.close()
+
+    return {**user.dict(), "id": user_id}
+
