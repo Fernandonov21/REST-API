@@ -48,6 +48,11 @@ class UserResponse(BaseModel):
     class Config:
         orm_mode = True
 
+# Pydantic model para la creación y actualización de usuarios
+class UserCreateUpdate(BaseModel):
+    username: str
+    email: str
+
 # Ruta raíz
 @app.get("/", tags=["Root"])
 def read_root():
@@ -79,7 +84,7 @@ def get_user(user_id: int):
 
 # Crear un nuevo usuario
 @app.post("/users/", response_model=UserResponse, tags=["Users"])
-def create_user(user: UserResponse):
+def create_user(user: UserCreateUpdate):
     connection = get_db_connection()
     cursor = connection.cursor()
     cursor.execute(
@@ -92,4 +97,31 @@ def create_user(user: UserResponse):
     connection.close()
 
     return {**user.dict(), "id": user_id}
+
+# Actualizar un usuario existente
+@app.put("/users/{user_id}", response_model=UserResponse, tags=["Users"])
+def update_user(user_id: int, user: UserCreateUpdate):
+    connection = get_db_connection()
+    cursor = connection.cursor()
+    cursor.execute(
+        "UPDATE users SET username = %s, email = %s WHERE id = %s",
+        (user.username, user.email, user_id)
+    )
+    connection.commit()
+    cursor.close()
+    connection.close()
+
+    return {**user.dict(), "id": user_id}
+
+# Eliminar un usuario existente
+@app.delete("/users/{user_id}", tags=["Users"])
+def delete_user(user_id: int):
+    connection = get_db_connection()
+    cursor = connection.cursor()
+    cursor.execute("DELETE FROM users WHERE id = %s", (user_id,))
+    connection.commit()
+    cursor.close()
+    connection.close()
+
+    return {"message": "User deleted successfully"}
 
